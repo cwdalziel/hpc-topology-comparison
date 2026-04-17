@@ -1,0 +1,326 @@
+<?xml version='1.0'?>
+<!DOCTYPE platform SYSTEM "https://simgrid.org/simgrid.dtd">
+<platform version="4.1">
+  <zone id="world" routing="Floyd">
+    <host id="node-0.simgrid.org" speed="100Gf"/>
+    <host id="node-1.simgrid.org" speed="100Gf"/>
+    <host id="node-2.simgrid.org" speed="100Gf"/>
+    <host id="node-3.simgrid.org" speed="100Gf"/>
+    <host id="node-4.simgrid.org" speed="100Gf"/>
+    <host id="node-5.simgrid.org" speed="100Gf"/>
+    <host id="node-6.simgrid.org" speed="100Gf"/>
+    <host id="node-7.simgrid.org" speed="100Gf"/>
+    <host id="node-8.simgrid.org" speed="100Gf"/>
+    <host id="node-9.simgrid.org" speed="100Gf"/>
+    <host id="node-10.simgrid.org" speed="100Gf"/>
+    <host id="node-11.simgrid.org" speed="100Gf"/>
+    <host id="node-12.simgrid.org" speed="100Gf"/>
+    <host id="node-13.simgrid.org" speed="100Gf"/>
+    <host id="node-14.simgrid.org" speed="100Gf"/>
+    <host id="node-15.simgrid.org" speed="100Gf"/>
+    <host id="node-16.simgrid.org" speed="100Gf"/>
+    <host id="node-17.simgrid.org" speed="100Gf"/>
+    <host id="node-18.simgrid.org" speed="100Gf"/>
+    <host id="node-19.simgrid.org" speed="100Gf"/>
+    <host id="node-20.simgrid.org" speed="100Gf"/>
+    <host id="node-21.simgrid.org" speed="100Gf"/>
+    <host id="node-22.simgrid.org" speed="100Gf"/>
+    <host id="node-23.simgrid.org" speed="100Gf"/>
+    <host id="node-24.simgrid.org" speed="100Gf"/>
+    <host id="node-25.simgrid.org" speed="100Gf"/>
+    <host id="node-26.simgrid.org" speed="100Gf"/>
+    <host id="node-27.simgrid.org" speed="100Gf"/>
+    <host id="node-28.simgrid.org" speed="100Gf"/>
+    <host id="node-29.simgrid.org" speed="100Gf"/>
+    <host id="node-30.simgrid.org" speed="100Gf"/>
+    <host id="node-31.simgrid.org" speed="100Gf"/>
+    <host id="node-32.simgrid.org" speed="100Gf"/>
+    <host id="node-33.simgrid.org" speed="100Gf"/>
+    <host id="node-34.simgrid.org" speed="100Gf"/>
+    <host id="node-35.simgrid.org" speed="100Gf"/>
+    <host id="node-36.simgrid.org" speed="100Gf"/>
+    <host id="node-37.simgrid.org" speed="100Gf"/>
+    <host id="node-38.simgrid.org" speed="100Gf"/>
+    <host id="node-39.simgrid.org" speed="100Gf"/>
+    <host id="node-40.simgrid.org" speed="100Gf"/>
+    <host id="node-41.simgrid.org" speed="100Gf"/>
+    <host id="node-42.simgrid.org" speed="100Gf"/>
+    <host id="node-43.simgrid.org" speed="100Gf"/>
+    <host id="node-44.simgrid.org" speed="100Gf"/>
+    <host id="node-45.simgrid.org" speed="100Gf"/>
+    <host id="node-46.simgrid.org" speed="100Gf"/>
+    <host id="node-47.simgrid.org" speed="100Gf"/>
+    <host id="node-48.simgrid.org" speed="100Gf"/>
+    <host id="node-49.simgrid.org" speed="100Gf"/>
+    <host id="node-50.simgrid.org" speed="100Gf"/>
+    <host id="node-51.simgrid.org" speed="100Gf"/>
+    <host id="node-52.simgrid.org" speed="100Gf"/>
+    <host id="node-53.simgrid.org" speed="100Gf"/>
+    <host id="node-54.simgrid.org" speed="100Gf"/>
+    <host id="node-55.simgrid.org" speed="100Gf"/>
+    <host id="node-56.simgrid.org" speed="100Gf"/>
+    <host id="node-57.simgrid.org" speed="100Gf"/>
+    <host id="node-58.simgrid.org" speed="100Gf"/>
+    <host id="node-59.simgrid.org" speed="100Gf"/>
+    <host id="node-60.simgrid.org" speed="100Gf"/>
+    <host id="node-61.simgrid.org" speed="100Gf"/>
+    <host id="node-62.simgrid.org" speed="100Gf"/>
+    <host id="node-63.simgrid.org" speed="100Gf"/>
+    <link id="link-0-1" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-1-2" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-2-3" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-3-4" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-4-5" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-5-6" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-6-7" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-7-8" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-8-9" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-9-10" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-10-11" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-11-12" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-12-13" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-13-14" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-14-15" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-15-16" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-16-17" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-17-18" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-18-19" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-19-20" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-20-21" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-21-22" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-22-23" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-23-24" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-24-25" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-25-26" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-26-27" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-27-28" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-28-29" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-29-30" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-30-31" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-31-32" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-32-33" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-33-34" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-34-35" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-35-36" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-36-37" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-37-38" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-38-39" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-39-40" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-40-41" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-41-42" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-42-43" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-43-44" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-44-45" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-45-46" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-46-47" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-47-48" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-48-49" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-49-50" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-50-51" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-51-52" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-52-53" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-53-54" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-54-55" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-55-56" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-56-57" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-57-58" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-58-59" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-59-60" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-60-61" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-61-62" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-62-63" bandwidth="12.5GBps" latency="1us"/>
+    <link id="link-63-0" bandwidth="12.5GBps" latency="1us"/>
+    <route src="node-0.simgrid.org" dst="node-1.simgrid.org">
+      <link_ctn id="link-0-1"/>
+    </route>
+    <route src="node-1.simgrid.org" dst="node-2.simgrid.org">
+      <link_ctn id="link-1-2"/>
+    </route>
+    <route src="node-2.simgrid.org" dst="node-3.simgrid.org">
+      <link_ctn id="link-2-3"/>
+    </route>
+    <route src="node-3.simgrid.org" dst="node-4.simgrid.org">
+      <link_ctn id="link-3-4"/>
+    </route>
+    <route src="node-4.simgrid.org" dst="node-5.simgrid.org">
+      <link_ctn id="link-4-5"/>
+    </route>
+    <route src="node-5.simgrid.org" dst="node-6.simgrid.org">
+      <link_ctn id="link-5-6"/>
+    </route>
+    <route src="node-6.simgrid.org" dst="node-7.simgrid.org">
+      <link_ctn id="link-6-7"/>
+    </route>
+    <route src="node-7.simgrid.org" dst="node-8.simgrid.org">
+      <link_ctn id="link-7-8"/>
+    </route>
+    <route src="node-8.simgrid.org" dst="node-9.simgrid.org">
+      <link_ctn id="link-8-9"/>
+    </route>
+    <route src="node-9.simgrid.org" dst="node-10.simgrid.org">
+      <link_ctn id="link-9-10"/>
+    </route>
+    <route src="node-10.simgrid.org" dst="node-11.simgrid.org">
+      <link_ctn id="link-10-11"/>
+    </route>
+    <route src="node-11.simgrid.org" dst="node-12.simgrid.org">
+      <link_ctn id="link-11-12"/>
+    </route>
+    <route src="node-12.simgrid.org" dst="node-13.simgrid.org">
+      <link_ctn id="link-12-13"/>
+    </route>
+    <route src="node-13.simgrid.org" dst="node-14.simgrid.org">
+      <link_ctn id="link-13-14"/>
+    </route>
+    <route src="node-14.simgrid.org" dst="node-15.simgrid.org">
+      <link_ctn id="link-14-15"/>
+    </route>
+    <route src="node-15.simgrid.org" dst="node-16.simgrid.org">
+      <link_ctn id="link-15-16"/>
+    </route>
+    <route src="node-16.simgrid.org" dst="node-17.simgrid.org">
+      <link_ctn id="link-16-17"/>
+    </route>
+    <route src="node-17.simgrid.org" dst="node-18.simgrid.org">
+      <link_ctn id="link-17-18"/>
+    </route>
+    <route src="node-18.simgrid.org" dst="node-19.simgrid.org">
+      <link_ctn id="link-18-19"/>
+    </route>
+    <route src="node-19.simgrid.org" dst="node-20.simgrid.org">
+      <link_ctn id="link-19-20"/>
+    </route>
+    <route src="node-20.simgrid.org" dst="node-21.simgrid.org">
+      <link_ctn id="link-20-21"/>
+    </route>
+    <route src="node-21.simgrid.org" dst="node-22.simgrid.org">
+      <link_ctn id="link-21-22"/>
+    </route>
+    <route src="node-22.simgrid.org" dst="node-23.simgrid.org">
+      <link_ctn id="link-22-23"/>
+    </route>
+    <route src="node-23.simgrid.org" dst="node-24.simgrid.org">
+      <link_ctn id="link-23-24"/>
+    </route>
+    <route src="node-24.simgrid.org" dst="node-25.simgrid.org">
+      <link_ctn id="link-24-25"/>
+    </route>
+    <route src="node-25.simgrid.org" dst="node-26.simgrid.org">
+      <link_ctn id="link-25-26"/>
+    </route>
+    <route src="node-26.simgrid.org" dst="node-27.simgrid.org">
+      <link_ctn id="link-26-27"/>
+    </route>
+    <route src="node-27.simgrid.org" dst="node-28.simgrid.org">
+      <link_ctn id="link-27-28"/>
+    </route>
+    <route src="node-28.simgrid.org" dst="node-29.simgrid.org">
+      <link_ctn id="link-28-29"/>
+    </route>
+    <route src="node-29.simgrid.org" dst="node-30.simgrid.org">
+      <link_ctn id="link-29-30"/>
+    </route>
+    <route src="node-30.simgrid.org" dst="node-31.simgrid.org">
+      <link_ctn id="link-30-31"/>
+    </route>
+    <route src="node-31.simgrid.org" dst="node-32.simgrid.org">
+      <link_ctn id="link-31-32"/>
+    </route>
+    <route src="node-32.simgrid.org" dst="node-33.simgrid.org">
+      <link_ctn id="link-32-33"/>
+    </route>
+    <route src="node-33.simgrid.org" dst="node-34.simgrid.org">
+      <link_ctn id="link-33-34"/>
+    </route>
+    <route src="node-34.simgrid.org" dst="node-35.simgrid.org">
+      <link_ctn id="link-34-35"/>
+    </route>
+    <route src="node-35.simgrid.org" dst="node-36.simgrid.org">
+      <link_ctn id="link-35-36"/>
+    </route>
+    <route src="node-36.simgrid.org" dst="node-37.simgrid.org">
+      <link_ctn id="link-36-37"/>
+    </route>
+    <route src="node-37.simgrid.org" dst="node-38.simgrid.org">
+      <link_ctn id="link-37-38"/>
+    </route>
+    <route src="node-38.simgrid.org" dst="node-39.simgrid.org">
+      <link_ctn id="link-38-39"/>
+    </route>
+    <route src="node-39.simgrid.org" dst="node-40.simgrid.org">
+      <link_ctn id="link-39-40"/>
+    </route>
+    <route src="node-40.simgrid.org" dst="node-41.simgrid.org">
+      <link_ctn id="link-40-41"/>
+    </route>
+    <route src="node-41.simgrid.org" dst="node-42.simgrid.org">
+      <link_ctn id="link-41-42"/>
+    </route>
+    <route src="node-42.simgrid.org" dst="node-43.simgrid.org">
+      <link_ctn id="link-42-43"/>
+    </route>
+    <route src="node-43.simgrid.org" dst="node-44.simgrid.org">
+      <link_ctn id="link-43-44"/>
+    </route>
+    <route src="node-44.simgrid.org" dst="node-45.simgrid.org">
+      <link_ctn id="link-44-45"/>
+    </route>
+    <route src="node-45.simgrid.org" dst="node-46.simgrid.org">
+      <link_ctn id="link-45-46"/>
+    </route>
+    <route src="node-46.simgrid.org" dst="node-47.simgrid.org">
+      <link_ctn id="link-46-47"/>
+    </route>
+    <route src="node-47.simgrid.org" dst="node-48.simgrid.org">
+      <link_ctn id="link-47-48"/>
+    </route>
+    <route src="node-48.simgrid.org" dst="node-49.simgrid.org">
+      <link_ctn id="link-48-49"/>
+    </route>
+    <route src="node-49.simgrid.org" dst="node-50.simgrid.org">
+      <link_ctn id="link-49-50"/>
+    </route>
+    <route src="node-50.simgrid.org" dst="node-51.simgrid.org">
+      <link_ctn id="link-50-51"/>
+    </route>
+    <route src="node-51.simgrid.org" dst="node-52.simgrid.org">
+      <link_ctn id="link-51-52"/>
+    </route>
+    <route src="node-52.simgrid.org" dst="node-53.simgrid.org">
+      <link_ctn id="link-52-53"/>
+    </route>
+    <route src="node-53.simgrid.org" dst="node-54.simgrid.org">
+      <link_ctn id="link-53-54"/>
+    </route>
+    <route src="node-54.simgrid.org" dst="node-55.simgrid.org">
+      <link_ctn id="link-54-55"/>
+    </route>
+    <route src="node-55.simgrid.org" dst="node-56.simgrid.org">
+      <link_ctn id="link-55-56"/>
+    </route>
+    <route src="node-56.simgrid.org" dst="node-57.simgrid.org">
+      <link_ctn id="link-56-57"/>
+    </route>
+    <route src="node-57.simgrid.org" dst="node-58.simgrid.org">
+      <link_ctn id="link-57-58"/>
+    </route>
+    <route src="node-58.simgrid.org" dst="node-59.simgrid.org">
+      <link_ctn id="link-58-59"/>
+    </route>
+    <route src="node-59.simgrid.org" dst="node-60.simgrid.org">
+      <link_ctn id="link-59-60"/>
+    </route>
+    <route src="node-60.simgrid.org" dst="node-61.simgrid.org">
+      <link_ctn id="link-60-61"/>
+    </route>
+    <route src="node-61.simgrid.org" dst="node-62.simgrid.org">
+      <link_ctn id="link-61-62"/>
+    </route>
+    <route src="node-62.simgrid.org" dst="node-63.simgrid.org">
+      <link_ctn id="link-62-63"/>
+    </route>
+    <route src="node-63.simgrid.org" dst="node-0.simgrid.org">
+      <link_ctn id="link-63-0"/>
+    </route>
+  </zone>
+</platform>
