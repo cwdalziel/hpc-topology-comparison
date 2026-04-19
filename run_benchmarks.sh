@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
     echo "Usage: $0 <binary>"
     exit 1
 fi
-
+FLOPS=
 BINARY=$1
 NP=64
 PLATFORM_DIR=platforms
@@ -37,10 +37,11 @@ echo "-----------------------------------------------------------"
 for PLATFORM in "$PLATFORM_DIR"/*.xml; do
     TOPOLOGY=$(basename "$PLATFORM" .xml)
     printf "  %-20s ... " "$TOPOLOGY"
-
     OUTPUT=$(smpirun -np "$NP" \
                      -platform "$PLATFORM" \
+                     --cfg=smpi/host-speed:auto \
                      --cfg=smpi/display-timing:yes \
+                     --cfg=smpi/coll-selector:ompi \
                      "$BINARY" 2>&1)
 
     # Extract the timing line from the output
