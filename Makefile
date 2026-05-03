@@ -1,21 +1,20 @@
 CXX      = smpicxx
 CXXFLAGS = -O2 -Wall
+LDFLAGS  = -lfftw3 -lfftw3_mpi -lm
 SRCDIR   = src
 BINDIR   = bin
 RESDIR   = results
 
-SOURCES  = $(wildcard $(SRCDIR)/*.cpp)
+SOURCES  = $(shell find $(SRCDIR) -name '*.cpp')
 TARGETS  = $(patsubst $(SRCDIR)/%.cpp, $(BINDIR)/%, $(SOURCES))
 
-.PHONY: all clean
+.PHONY: all clean clean-all
 
-all: $(BINDIR) $(TARGETS)
-
-$(BINDIR):
-	mkdir -p $(BINDIR)
+all: $(TARGETS)
 
 $(BINDIR)/%: $(SRCDIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -o $@ $<
+	mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 clean-all:
 	rm -rf $(BINDIR) $(RESDIR)
