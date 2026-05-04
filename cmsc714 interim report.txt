@@ -1,0 +1,30 @@
+﻿Julian LaGattuta, Carson Dalziel, Menutha Wijitharathna, Sonok Mahapatra
+
+
+CMSC714 Interim Report
+Comparing Network Topologies on Common MPI Workloads
+
+
+Updated Topic:
+
+
+        Our plan is to use cluster simulation software to compare how four different algorithms fare against five different network topologies. The four algorithms are a 3D stencil, 3D FFT, Barnes-Hut N-Body simulation, and sample sort. Those algorithms were chosen because they vary in bottlenecks, locality, and communication operations. Our topologies are hypercube, fat tree, 3D torus, dragonfly, and ring. Every person will be assigned an algorithm, and, for each given topology, they will attempt to optimize the algorithm, if possible, for the topology. 
+        The cluster simulation software we are using is SimGrid. SimGrid comes with its own compiler (smpicxx for C++) and mpi runtime (smpirun). The user simply uses this compiler and runtime in place of the default mpi ones and provides an XML file defining the network topology to smpirun with the -network flag. SimGrid’s runtime will then run the MPI program with artificial network delays as if it were run on a cluster with that topology and can approximate the hypothetical runtime on a specified clock speed. 
+
+
+Progress:
+
+
+        We have successfully installed SimGrid and set up a shared GitHub repository. We have set up the framework for efficient testing (a makefile and bash script to compile and benchmark all source files). We additionally have some simple example C++ MPI programs to verify the functionality of our SimGrid install and our benchmarking script. We will later replace the example programs with the MPI programs we intend to test. We have also set up all of the topology XML files for all topologies we intend to test. 
+
+
+Remaining Work:
+
+
+        First, each person will complete the implementation of their chosen algorithm. They will complete a topology agnostic version which they will benchmark the runtime of on all topologies. They will then attempt to optimize their code for each topology and see how much additional speedup that could provide. We will then gather all of the benchmarking data and make a qualitative and quantitative analysis of which topologies are best for which algorithms (potentially considering hardware cost), which topologies benefit from topology aware code, general trends between algorithms and topologies, and any other relevant findings. 
+
+
+Further Questions:
+
+
+        We are still unsure of how we should test scaling for each algorithm on each topology. For example, should we see how runtime scales with number of nodes, message size, or both? We also have questions about discussing the price of different topologies. We are currently doing 64 nodes, but topologies start to matter when there are significantly more nodes. For example, an Infiniband switch can often handle 40 or more nodes. I cannot find HPC switches that are meant to handle 10 connections.
