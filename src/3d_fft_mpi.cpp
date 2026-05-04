@@ -130,67 +130,69 @@ int main(int argc, char **argv)
     }
     MPI_Scatter(cube, local_size, MPI_BYTE, data, local_size, MPI_BYTE, 0, MPI_COMM_WORLD);
     
-    fftw_free(cube);
-    
     if(rank == 0){
+        fftw_free(cube);
+    }
+    
+    if(rank == 15){
         printf("Data after scattering (local slice on rank 0):\n");
         print3dMatrix(data, N, local_slices);
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
-    double t_start = MPI_Wtime();
+    // double t_start = MPI_Wtime();
 
-    /* Stage 1: FFT along X */
-    fft_x_axis(data, local_slices, N);
+    // /* Stage 1: FFT along X */
+    // fft_x_axis(data, local_slices, N);
 
-    /* Stage 2: All-to-all transpose */
-    transpose_alltoall_3d(data, temp, local_slices, N, P, MPI_COMM_WORLD);
+    // /* Stage 2: All-to-all transpose */
+    // transpose_alltoall_3d(data, temp, local_slices, N, P, MPI_COMM_WORLD);
 
-    /* Stage 3: FFT along Y */
-    fft_y_axis(temp, local_slices, N);
+    // /* Stage 3: FFT along Y */
+    // fft_y_axis(temp, local_slices, N);
 
-    /* Stage 4: All-to-all transpose 2 */
-    /* */
-    transpose_alltoall_3d(temp, data, local_slices, N, P, MPI_COMM_WORLD);
+    // /* Stage 4: All-to-all transpose 2 */
+    // /* */
+    // transpose_alltoall_3d(temp, data, local_slices, N, P, MPI_COMM_WORLD);
 
-    /* Stage 5: FFT along Z (outermost dimension) */
-    fftw_plan plan_z = fftw_plan_many_dft(
-        1, &N, local_slices,
-        data, NULL, N * N, 1,
-        data, NULL, N * N, 1,
-        FFTW_FORWARD, FFTW_ESTIMATE);
-    fftw_execute(plan_z);
-    fftw_destroy_plan(plan_z);
+    // /* Stage 5: FFT along Z (outermost dimension) */
+    // fftw_plan plan_z = fftw_plan_many_dft(
+    //     1, &N, local_slices,
+    //     data, NULL, N * N, 1,
+    //     data, NULL, N * N, 1,
+    //     FFTW_FORWARD, FFTW_ESTIMATE);
+    // fftw_execute(plan_z);
+    // fftw_destroy_plan(plan_z);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    double t_end = MPI_Wtime();
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // double t_end = MPI_Wtime();
 
-    /* For verification, perform inverse FFT  */
-    if (rank == 0){
-        printf("Performing inverse FFT for verification...\n");
-    fftw_plan plan_inv = fftw_plan_dft_3d(N, N, N, data, data, FFTW_BACKWARD, FFTW_ESTIMATE);
-    fftw_execute(plan_inv);
-    fftw_destroy_plan(plan_inv);
+    // /* For verification, perform inverse FFT  */
+    // if (rank == 0){
+    //     printf("Performing inverse FFT for verification...\n");
+    // fftw_plan plan_inv = fftw_plan_dft_3d(N, N, N, data, data, FFTW_BACKWARD, FFTW_ESTIMATE);
+    // fftw_execute(plan_inv);
+    // fftw_destroy_plan(plan_inv);
 
-    /* Scale by 1/N³ */
-    double scale = 1.0 / (N * N * N);
-    for (size_t i = 0; i < local_size; i++) {
-        data[i][0] *= scale;
-        data[i][1] *= scale;
-    }
+    // /* Scale by 1/N³ */
+    // double scale = 1.0 / (N * N * N);
+    // for (size_t i = 0; i < local_size; i++) {
+    //     data[i][0] *= scale;
+    //     data[i][1] *= scale;
+    // }
 
-    /* Compare with initial data */
-    double error = 0.0;
-    for (size_t i = 0; i < local_size; i++) {
-        error += pow(data[i][0], 2) + pow(data[i][1], 2);
-    }
-    }
+    // /* Compare with initial data */
+    // double error = 0.0;
+    // for (size_t i = 0; i < local_size; i++) {
+    //     error += pow(data[i][0], 2) + pow(data[i][1], 2);
+    // }
+    // }
 
-    if (rank == 0) {
-        printf("=== 3D FFT MPI Results ===\n");
-        printf("N=%d (N³=%d), P=%d\n", N, N*N*N, P);
-        printf("Total time: %.6f s\n", t_end - t_start);
-    }
+    // if (rank == 0) {
+    //     printf("=== 3D FFT MPI Results ===\n");
+    //     printf("N=%d (N³=%d), P=%d\n", N, N*N*N, P);
+    //     printf("Total time: %.6f s\n", t_end - t_start);
+    // }
 
     fftw_free(data);
     fftw_free(temp);
