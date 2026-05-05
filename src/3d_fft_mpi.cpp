@@ -147,21 +147,27 @@ int main(int argc, char **argv)
     if(rank == 0){
         int total_size = N * N * N;
         cube = (fftw_complex *)fftw_malloc(total_size * sizeof(fftw_complex));
+        #ifdef DEBUG
         printf("Initializing data on rank 0...\n");
+        #endif
         init_data_3d(cube, N);
         // print3dMatrix(cube, N, N);  // Skip large print for now
+        #ifdef DEBUG
         printf("Scattering data to all ranks...\n");
+        #endif
     }
     MPI_Scatter(cube, local_size, MPI_BYTE, data, local_size, MPI_BYTE, 0, MPI_COMM_WORLD);
     
     if(rank == 0){
         fftw_free(cube);
     }
-    
+    #ifdef DEBUG
     printf("Rank %d: After scatter, before FFTs\n", rank);
     fflush(stdout);
+    #endif
     MPI_Barrier(MPI_COMM_WORLD);
     
+    #ifdef DEBUG
     /* Compute input energy for verification via Parseval's theorem */
     double local_input_energy = 0.0;
     for (int i = 0; i < local_slices * N * N; i++) {
@@ -170,17 +176,20 @@ int main(int argc, char **argv)
     }
     
     if(rank == 1){
-        // printf("Data after scattering (local slice on rank 0):\n");
-        // print3dMatrix(data, N, local_slices);
+        printf("Data after scattering (local slice on rank 0):\n");
+        print3dMatrix(data, N, local_slices);
     }
     // }
 
+    #endif
     MPI_Barrier(MPI_COMM_WORLD);
     double t_start = MPI_Wtime();
 
     // /* Stage 1: FFT along Y for slices */
+    #ifdef DEBUG
     printf("Rank %d: Starting FFT along Y\n", rank);
     fflush(stdout);
+    #endif
     fft_1d_slices(data, fft1out, local_slices, N);
     transpose_local_yz(fft1out, data_t, local_slices, N);
     // printf("FFT along y done on rank %d, now doing FFT along x for transposed slices...\n", rank);
@@ -196,15 +205,18 @@ int main(int argc, char **argv)
     fftw_complex *recvd = (fftw_complex *)fftw_malloc(local_size);
     MPI_Barrier(MPI_COMM_WORLD);
     transpose_alltoall_3d(data_t, recvd, local_slices, N, P, MPI_COMM_WORLD);
+    #ifdef DEBUG
     printf("All-to-all transpose done on rank %d, now doing FFT along x for transposed slices...\n", rank);
+    #endif
     // if(rank == 0){
     //     printf("Data after all-to-all transpose (local slice on rank 0):\n");
     //     print3dMatrix(recvd, N, local_slices);
     // }
     //Do the 1D fft along the x axis for the transposed data in slices.
     fftw_complex *fft3out = (fftw_complex *)fftw_malloc(local_size);
-    fft_1d_slices(recvd,fft3out, local_slices, N); //Error
+    fft_1d_slices(recvd,fft3out, local_slices, N);
 
+    #ifdef DEBUG
     printf("FFT along x done on rank %d, now doing inverse all-to-all transpose to restore original distribution...\n", rank);
     /* Inverse all-to-all transpose - using self-inverse block-based redistribution */
     fftw_complex *data_restored = (fftw_complex *)fftw_malloc(local_size);
@@ -248,8 +260,10 @@ int main(int argc, char **argv)
         printf("Total time: %.6f s\n", t_end - t_start);
         fftw_free(full_data);
     }
-
     fftw_free(data_restored);
+    #endif
+
+    
     fftw_free(data);
     fftw_free(data_t);
 
