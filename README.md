@@ -1,4 +1,4 @@
-# CMSC 714 Research Project
+# HPC Topology Comparison
 
 ## Local setup (Docker — recommended)
 
