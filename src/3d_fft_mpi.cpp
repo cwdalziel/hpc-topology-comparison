@@ -37,7 +37,7 @@ void print3dMatrix(fftw_complex *buf, int N, int local_slices)
             std::cout << " [ ";
             for (int y = 0; y < N; y++) {
                 int idx = (x * N + z) * N + y;
-                std::cout << std::setw(4) << buf[idx][0] << " ";    
+                std::cout << std::setw(4) << static_cast<float>(buf[idx][0]) << " ";    
             }
             std::cout << " ]" << std::endl;
         }
@@ -148,17 +148,19 @@ int main(int argc, char **argv)
         fftw_free(cube);
     }
     
-    // if(rank == 1){
-    //     printf("Data after scattering (local slice on rank 0):\n");
-    //     print3dMatrix(data, N, local_slices);
+    if(rank == 1){
+        // printf("Data after scattering (local slice on rank 0):\n");
+        // print3dMatrix(data, N, local_slices);
+    }
     // }
 
     MPI_Barrier(MPI_COMM_WORLD);
     double t_start = MPI_Wtime();
 
     // /* Stage 1: FFT along Y for slices */
-    // fft_1d_slices(data, local_slices, N);
+    fft_1d_slices(data, local_slices, N);
     transpose_local_yz(data, data_t, local_slices, N);
+    fft_1d_slices(data_t, local_slices, N);
 
     if(rank == 0){
         print3dMatrix(data, N, local_slices);
