@@ -178,11 +178,24 @@ int main(int argc, char* argv[]) {
     }
     std::vector<Key> received(static_cast<size_t>(recv_total));
 
-    // ----- PLACEHOLDER (matches agnostic; replace this single call) -----
-    MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
-                  received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
-                  MPI_COMM_WORLD);
-    // --------------------------------------------------------------------
+    // ----- Ring-aware redistribution -----
+    // Skip the network for the rank's own chunk (data going from rank to itself).
+    if (send_counts[rank] > 0) {
+        std::copy(local.begin() + send_displs[rank],
+                  local.begin() + send_displs[rank] + send_counts[rank],
+                  received.begin() + recv_displs[rank]);
+    }
+    // p-1 rounds of pairwise MPI_Sendrecv at increasing ring distance.
+    // Round k pairs each rank with neighbors at distance k (forward send, backward recv).
+    // Each round is one synchronized exchange across all ranks; total p-1 rounds.
+    for (int k = 1; k < p; k++) {
+        int dst = (rank + k) % p;
+        int src = (rank - k + p) % p;
+        MPI_Sendrecv(local.data()    + send_displs[dst], send_counts[dst], MPI_KEY, dst, 7,
+                     received.data() + recv_displs[src], recv_counts[src], MPI_KEY, src, 7,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+    // -------------------------------------
 
     // ===== Step 8: identical to agnostic =====
     std::sort(received.begin(), received.end());

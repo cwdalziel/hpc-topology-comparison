@@ -189,19 +189,136 @@ int main(int argc, char* argv[]) {
     //       hierarchical redistribution. Inspect the platform XML before
     //       coding to lock down what the group size should be.
 
-    std::vector<int> recv_displs(p, 0);
-    long long recv_total = recv_counts[0];
-    for (int i = 1; i < p; i++) {
-        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
-        recv_total += recv_counts[i];
-    }
-    std::vector<Key> received(static_cast<size_t>(recv_total));
+    std::vector<Key> received;
 
-    // ----- PLACEHOLDER (matches agnostic; replace with hierarchical) -----
-    MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
-                  received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
-                  MPI_COMM_WORLD);
-    // ---------------------------------------------------------------------
+    // ----- 2-phase hierarchical alltoallv: intra-group then inter-group -----
+    // Pick a group factorization. We do NOT parse platforms/<np>/dragonfly.xml
+    // — instead we reuse MPI_Dims_create's balanced 2D factor, which gives us
+    // dims = (num_groups, group_size). For the matching np values this is:
+    //   p=16  -> 4x4    p=32  -> 4x8    p=64  -> 8x8
+    //   p=128 -> 8x16   p=256 -> 16x16
+    // The "groups" in dragonfly map to the first dim; intra-group ranks to
+    // the second. A more exact match to the platform XML's group structure
+    // would be more topology-aware; for now this still avoids the global
+    // alltoallv pattern.
+    int dims[2] = {0, 0};
+    MPI_Dims_create(p, 2, dims);   // dims[0]=num_groups, dims[1]=group_size
+    int num_groups  = dims[0];
+    int group_size  = dims[1];
+    int group_id    = rank / group_size;
+    int intra_rank  = rank % group_size;
+
+    MPI_Comm intra_group_comm, inter_group_comm;
+    MPI_Comm_split(MPI_COMM_WORLD, group_id,   intra_rank, &intra_group_comm);  // size=group_size
+    MPI_Comm_split(MPI_COMM_WORLD, intra_rank, group_id,   &inter_group_comm);  // size=num_groups
+
+    // target rank == g*group_size + ir, where g = target_group, ir = intra-rank.
+    // Phase 1 (intra-group): redistribute so chunks land on rank (g, intra_rank=ir)
+    //   for ranks in MY group. After phase 1, intra_rank=ir holds chunks
+    //   destined for (any_group, ir).
+    // Phase 2 (inter-group): each rank now sends chunks destined for the right group.
+
+    // counts2d[ir * num_groups + g] = bytes I send to rank (g, ir)
+    std::vector<int> my_counts2d(static_cast<size_t>(group_size) * num_groups);
+    for (int g = 0; g < num_groups; g++)
+        for (int ir = 0; ir < group_size; ir++)
+            my_counts2d[ir * num_groups + g] = send_counts[g * group_size + ir];
+
+    // Phase 1 sends to intra-group rank ir the bundle for (any_group, ir).
+    std::vector<int> p1_send_counts(group_size, 0);
+    std::vector<int> p1_send_displs(group_size, 0);
+    int total_p1_send = 0;
+    for (int ir = 0; ir < group_size; ir++) {
+        for (int g = 0; g < num_groups; g++)
+            p1_send_counts[ir] += send_counts[g * group_size + ir];
+        p1_send_displs[ir] = total_p1_send;
+        total_p1_send += p1_send_counts[ir];
+    }
+
+    // Pack p1_send_buf grouped by intra_rank (ir), inner by group (g).
+    std::vector<Key> p1_send_buf(total_p1_send);
+    {
+        std::vector<int> wptr(p1_send_displs);
+        for (int g = 0; g < num_groups; g++) {
+            for (int ir = 0; ir < group_size; ir++) {
+                int dest = g * group_size + ir;
+                int sz = send_counts[dest];
+                std::copy(local.begin() + send_displs[dest],
+                          local.begin() + send_displs[dest] + sz,
+                          p1_send_buf.begin() + wptr[ir]);
+                wptr[ir] += sz;
+            }
+        }
+    }
+
+    // Exchange the per-(ir, g) count matrix on intra_group_comm.
+    std::vector<int> recv_counts2d(static_cast<size_t>(group_size) * num_groups);
+    MPI_Alltoall(my_counts2d.data(),   num_groups, MPI_INT,
+                 recv_counts2d.data(), num_groups, MPI_INT,
+                 intra_group_comm);
+    // recv_counts2d[ir * num_groups + g] = bytes from intra-group rank ir destined for (g, my_intra_rank).
+
+    std::vector<int> p1_recv_counts(group_size, 0);
+    std::vector<int> p1_recv_displs(group_size, 0);
+    int total_p1_recv = 0;
+    for (int ir = 0; ir < group_size; ir++) {
+        for (int g = 0; g < num_groups; g++)
+            p1_recv_counts[ir] += recv_counts2d[ir * num_groups + g];
+        p1_recv_displs[ir] = total_p1_recv;
+        total_p1_recv += p1_recv_counts[ir];
+    }
+
+    std::vector<Key> p1_recv_buf(total_p1_recv);
+    MPI_Alltoallv(p1_send_buf.data(), p1_send_counts.data(), p1_send_displs.data(), MPI_KEY,
+                  p1_recv_buf.data(), p1_recv_counts.data(), p1_recv_displs.data(), MPI_KEY,
+                  intra_group_comm);
+
+    // Reorganize phase-1 recv buf for phase 2: group by destination group g.
+    std::vector<int> p2_send_counts(num_groups, 0);
+    std::vector<int> p2_send_displs(num_groups, 0);
+    int total_p2_send = 0;
+    for (int g = 0; g < num_groups; g++) {
+        for (int ir = 0; ir < group_size; ir++)
+            p2_send_counts[g] += recv_counts2d[ir * num_groups + g];
+        p2_send_displs[g] = total_p2_send;
+        total_p2_send += p2_send_counts[g];
+    }
+
+    std::vector<Key> p2_send_buf(total_p2_send);
+    {
+        std::vector<int> wptr(p2_send_displs);
+        int rptr = 0;
+        for (int ir = 0; ir < group_size; ir++) {
+            for (int g = 0; g < num_groups; g++) {
+                int sz = recv_counts2d[ir * num_groups + g];
+                std::copy(p1_recv_buf.begin() + rptr,
+                          p1_recv_buf.begin() + rptr + sz,
+                          p2_send_buf.begin() + wptr[g]);
+                rptr += sz;
+                wptr[g] += sz;
+            }
+        }
+    }
+
+    std::vector<int> p2_recv_counts(num_groups, 0);
+    MPI_Alltoall(p2_send_counts.data(), 1, MPI_INT,
+                 p2_recv_counts.data(), 1, MPI_INT,
+                 inter_group_comm);
+    std::vector<int> p2_recv_displs(num_groups, 0);
+    int total_p2_recv = 0;
+    for (int g = 0; g < num_groups; g++) {
+        p2_recv_displs[g] = total_p2_recv;
+        total_p2_recv += p2_recv_counts[g];
+    }
+
+    received.resize(static_cast<size_t>(total_p2_recv));
+    MPI_Alltoallv(p2_send_buf.data(), p2_send_counts.data(), p2_send_displs.data(), MPI_KEY,
+                  received.data(),    p2_recv_counts.data(), p2_recv_displs.data(), MPI_KEY,
+                  inter_group_comm);
+
+    MPI_Comm_free(&intra_group_comm);
+    MPI_Comm_free(&inter_group_comm);
+    // -----------------------------------------------------------------------
 
     std::sort(received.begin(), received.end());
 

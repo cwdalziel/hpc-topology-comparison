@@ -32,6 +32,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <string>
 #include <vector>
@@ -196,13 +197,87 @@ int main(int argc, char* argv[]) {
         recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
         recv_total += recv_counts[i];
     }
-    std::vector<Key> received(static_cast<size_t>(recv_total));
+    std::vector<Key> received;  // populated below by hypercube redistribution
 
-    // ----- PLACEHOLDER (matches agnostic; replace this whole alltoallv) -----
-    MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
-                  received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
-                  MPI_COMM_WORLD);
-    // ------------------------------------------------------------------------
+    // ----- Hypercube-aware redistribution (recursive halving with forwarding) -----
+    // Verify p is a power of 2 (fall back to agnostic alltoallv otherwise).
+    int log_p = 0;
+    while ((1 << log_p) < p) log_p++;
+    if ((1 << log_p) != p) {
+        received.resize(static_cast<size_t>(recv_total));
+        MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
+                      received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
+                      MPI_COMM_WORLD);
+    } else {
+        // Per-bucket data: bucket_data[b] holds keys destined for rank b.
+        // Initially bucket b is the chunk local[send_displs[b] .. +send_counts[b]].
+        std::vector<std::vector<Key>> bucket_data(p);
+        for (int b = 0; b < p; b++) {
+            bucket_data[b].assign(local.begin() + send_displs[b],
+                                  local.begin() + send_displs[b] + send_counts[b]);
+        }
+
+        // log_p rounds. At round d, partner = rank XOR (1<<d).
+        // Send buckets b where bit d of b differs from bit d of rank.
+        // Receive partner's buckets that match my bit d.
+        for (int d = 0; d < log_p; d++) {
+            int partner = rank ^ (1 << d);
+            int my_bit = (rank >> d) & 1;
+
+            // Identify buckets to send vs keep.
+            std::vector<int> send_bids;
+            std::vector<int> send_sizes;
+            std::vector<Key> send_buf;
+            for (int b = 0; b < p; b++) {
+                if (bucket_data[b].empty()) continue;
+                int b_bit = (b >> d) & 1;
+                if (b_bit != my_bit) {
+                    send_bids.push_back(b);
+                    send_sizes.push_back(static_cast<int>(bucket_data[b].size()));
+                    send_buf.insert(send_buf.end(), bucket_data[b].begin(), bucket_data[b].end());
+                    bucket_data[b].clear();
+                    bucket_data[b].shrink_to_fit();
+                }
+            }
+
+            int n_send = static_cast<int>(send_bids.size());
+            int n_recv = 0;
+            MPI_Sendrecv(&n_send, 1, MPI_INT, partner, 100,
+                         &n_recv, 1, MPI_INT, partner, 100,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            std::vector<int> recv_bids(n_recv);
+            std::vector<int> recv_sizes(n_recv);
+            MPI_Sendrecv(send_bids.data(),  n_send, MPI_INT, partner, 101,
+                         recv_bids.data(),  n_recv, MPI_INT, partner, 101,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Sendrecv(send_sizes.data(), n_send, MPI_INT, partner, 102,
+                         recv_sizes.data(), n_recv, MPI_INT, partner, 102,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            int total_recv = std::accumulate(recv_sizes.begin(), recv_sizes.end(), 0);
+            std::vector<Key> recv_buf(total_recv);
+            MPI_Sendrecv(send_buf.data(), static_cast<int>(send_buf.size()), MPI_KEY, partner, 103,
+                         recv_buf.data(), total_recv, MPI_KEY, partner, 103,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            // Append received chunks into our bucket_data (multiple sources may
+            // contribute to the same bucket id across rounds).
+            int off = 0;
+            for (int i = 0; i < n_recv; i++) {
+                int b = recv_bids[i];
+                int sz = recv_sizes[i];
+                bucket_data[b].insert(bucket_data[b].end(),
+                                      recv_buf.begin() + off,
+                                      recv_buf.begin() + off + sz);
+                off += sz;
+            }
+        }
+
+        // After log_p rounds, only bucket_data[rank] should be populated.
+        received = std::move(bucket_data[rank]);
+    }
+    // ----------------------------------------------------------------------------
 
     // ===== Step 8 =====
     std::sort(received.begin(), received.end());

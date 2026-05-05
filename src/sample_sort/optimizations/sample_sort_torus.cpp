@@ -173,19 +173,136 @@ int main(int argc, char* argv[]) {
     // TODO: replace the placeholder MPI_Alltoallv below with the row+column
     //       phases.
 
-    std::vector<int> recv_displs(p, 0);
-    long long recv_total = recv_counts[0];
-    for (int i = 1; i < p; i++) {
-        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
-        recv_total += recv_counts[i];
-    }
-    std::vector<Key> received(static_cast<size_t>(recv_total));
+    std::vector<Key> received;
 
-    // ----- PLACEHOLDER (matches agnostic; replace this single call) -----
-    MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
-                  received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
-                  MPI_COMM_WORLD);
-    // --------------------------------------------------------------------
+    // ----- 2-phase Torus-aware alltoallv: row sub-alltoallv then column sub-alltoallv -----
+    // Build a 2D Cartesian comm with balanced dims via MPI_Dims_create.
+    int dims[2] = {0, 0};
+    MPI_Dims_create(p, 2, dims);   // dims[0] * dims[1] == p
+    int periods[2] = {1, 1};
+    MPI_Comm cart_comm;
+    MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, /*reorder=*/0, &cart_comm);
+
+    // (Cart coords exist; we don't need myrow/mycol explicitly because the
+    //  redistribution logic indexes into send_counts via the same row-major
+    //  rank == r*dims[1] + c convention used by MPI_Cart_create.)
+
+    // Sub-comms. With cart_create row-major: rank == row*dims[1] + col.
+    int remain_row[2] = {0, 1};   // drop dim 0 → "row sub-comm" (varying col)
+    int remain_col[2] = {1, 0};   // drop dim 1 → "col sub-comm" (varying row)
+    MPI_Comm row_comm, col_comm;
+    MPI_Cart_sub(cart_comm, remain_row, &row_comm);
+    MPI_Cart_sub(cart_comm, remain_col, &col_comm);
+
+    // Build per-row-mate per-dest-row count matrix (we need to know, for each
+    // row-mate c' we'll send to in phase 1, how that bundle further breaks
+    // down by destination row). counts2d[c' * dims[0] + r] = send_counts[r*dims[1]+c']
+    std::vector<int> my_counts2d(static_cast<size_t>(dims[1]) * dims[0]);
+    for (int c = 0; c < dims[1]; c++)
+        for (int r = 0; r < dims[0]; r++)
+            my_counts2d[c * dims[0] + r] = send_counts[r * dims[1] + c];
+
+    // Phase 1 send_counts/displs (for row sub-comm): per-target-col aggregate
+    std::vector<int> p1_send_counts(dims[1], 0);
+    std::vector<int> p1_send_displs(dims[1], 0);
+    int total_p1_send = 0;
+    for (int c = 0; c < dims[1]; c++) {
+        for (int r = 0; r < dims[0]; r++)
+            p1_send_counts[c] += send_counts[r * dims[1] + c];
+        p1_send_displs[c] = total_p1_send;
+        total_p1_send += p1_send_counts[c];
+    }
+
+    // Pack p1_send_buf: for each col c', concatenate chunks for (r, c') for r in 0..dims[0]-1
+    std::vector<Key> p1_send_buf(total_p1_send);
+    {
+        std::vector<int> wptr(p1_send_displs);
+        for (int r = 0; r < dims[0]; r++) {
+            for (int c = 0; c < dims[1]; c++) {
+                int dest = r * dims[1] + c;
+                int sz = send_counts[dest];
+                std::copy(local.begin() + send_displs[dest],
+                          local.begin() + send_displs[dest] + sz,
+                          p1_send_buf.begin() + wptr[c]);
+                wptr[c] += sz;
+            }
+        }
+    }
+
+    // Exchange the per-(c', r) count matrix on the row sub-comm so we can
+    // unpack phase-1 receipts by destination row in phase 2.
+    std::vector<int> recv_counts2d(static_cast<size_t>(dims[1]) * dims[0]);
+    MPI_Alltoall(my_counts2d.data(), dims[0], MPI_INT,
+                 recv_counts2d.data(), dims[0], MPI_INT,
+                 row_comm);
+    // recv_counts2d[c' * dims[0] + r] = bytes from row-mate c' destined for (r, mycol).
+
+    // Phase 1 recv_counts (per row-mate sum)
+    std::vector<int> p1_recv_counts(dims[1], 0);
+    std::vector<int> p1_recv_displs(dims[1], 0);
+    int total_p1_recv = 0;
+    for (int c = 0; c < dims[1]; c++) {
+        for (int r = 0; r < dims[0]; r++)
+            p1_recv_counts[c] += recv_counts2d[c * dims[0] + r];
+        p1_recv_displs[c] = total_p1_recv;
+        total_p1_recv += p1_recv_counts[c];
+    }
+
+    // Phase 1 alltoallv on row sub-comm
+    std::vector<Key> p1_recv_buf(total_p1_recv);
+    MPI_Alltoallv(p1_send_buf.data(), p1_send_counts.data(), p1_send_displs.data(), MPI_KEY,
+                  p1_recv_buf.data(), p1_recv_counts.data(), p1_recv_displs.data(), MPI_KEY,
+                  row_comm);
+
+    // Reorganize p1_recv_buf (currently grouped by source-col, inner by dest-row)
+    // into p2_send_buf (grouped by dest-row, inner by source-col).
+    std::vector<int> p2_send_counts(dims[0], 0);
+    std::vector<int> p2_send_displs(dims[0], 0);
+    int total_p2_send = 0;
+    for (int r = 0; r < dims[0]; r++) {
+        for (int c = 0; c < dims[1]; c++)
+            p2_send_counts[r] += recv_counts2d[c * dims[0] + r];
+        p2_send_displs[r] = total_p2_send;
+        total_p2_send += p2_send_counts[r];
+    }
+
+    std::vector<Key> p2_send_buf(total_p2_send);
+    {
+        std::vector<int> wptr(p2_send_displs);
+        int rptr = 0;
+        for (int c = 0; c < dims[1]; c++) {
+            for (int r = 0; r < dims[0]; r++) {
+                int sz = recv_counts2d[c * dims[0] + r];
+                std::copy(p1_recv_buf.begin() + rptr,
+                          p1_recv_buf.begin() + rptr + sz,
+                          p2_send_buf.begin() + wptr[r]);
+                rptr += sz;
+                wptr[r] += sz;
+            }
+        }
+    }
+
+    // Phase 2 recv counts via alltoall on col sub-comm
+    std::vector<int> p2_recv_counts(dims[0], 0);
+    MPI_Alltoall(p2_send_counts.data(), 1, MPI_INT,
+                 p2_recv_counts.data(), 1, MPI_INT,
+                 col_comm);
+    std::vector<int> p2_recv_displs(dims[0], 0);
+    int total_p2_recv = 0;
+    for (int r = 0; r < dims[0]; r++) {
+        p2_recv_displs[r] = total_p2_recv;
+        total_p2_recv += p2_recv_counts[r];
+    }
+
+    received.resize(static_cast<size_t>(total_p2_recv));
+    MPI_Alltoallv(p2_send_buf.data(), p2_send_counts.data(), p2_send_displs.data(), MPI_KEY,
+                  received.data(),    p2_recv_counts.data(), p2_recv_displs.data(), MPI_KEY,
+                  col_comm);
+
+    MPI_Comm_free(&row_comm);
+    MPI_Comm_free(&col_comm);
+    MPI_Comm_free(&cart_comm);
+    // -----------------------------------------------------------------------------------
 
     // ===== Step 8: identical to agnostic =====
     std::sort(received.begin(), received.end());

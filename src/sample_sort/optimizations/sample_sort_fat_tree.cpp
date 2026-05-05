@@ -193,11 +193,31 @@ int main(int argc, char* argv[]) {
     }
     std::vector<Key> received(static_cast<size_t>(recv_total));
 
-    // ----- PLACEHOLDER (matches agnostic; replace with chunked/non-blocking) -----
-    MPI_Alltoallv(local.data(),    send_counts.data(), send_displs.data(), MPI_KEY,
-                  received.data(), recv_counts.data(), recv_displs.data(), MPI_KEY,
-                  MPI_COMM_WORLD);
-    // -----------------------------------------------------------------------------
+    // ----- Chunked alltoallv -----
+    // Split each per-(src,dst) chunk into CHUNKS contiguous sub-chunks.
+    // Run CHUNKS smaller MPI_Alltoallv rounds. Smaller in-flight buffers
+    // reduce link saturation; the cumulative result is identical to one
+    // big MPI_Alltoallv. CHUNKS=4 is a reasonable starting point — tune
+    // (env-var override would also be reasonable) once you measure.
+    const int CHUNKS = 4;
+    std::vector<int> ck_sc(p), ck_sd(p), ck_rc(p), ck_rd(p);
+    for (int c = 0; c < CHUNKS; c++) {
+        for (int i = 0; i < p; i++) {
+            int s_start = static_cast<int>(static_cast<long long>(send_counts[i]) * c / CHUNKS);
+            int s_end   = static_cast<int>(static_cast<long long>(send_counts[i]) * (c + 1) / CHUNKS);
+            ck_sc[i] = s_end - s_start;
+            ck_sd[i] = send_displs[i] + s_start;
+
+            int r_start = static_cast<int>(static_cast<long long>(recv_counts[i]) * c / CHUNKS);
+            int r_end   = static_cast<int>(static_cast<long long>(recv_counts[i]) * (c + 1) / CHUNKS);
+            ck_rc[i] = r_end - r_start;
+            ck_rd[i] = recv_displs[i] + r_start;
+        }
+        MPI_Alltoallv(local.data(),    ck_sc.data(), ck_sd.data(), MPI_KEY,
+                      received.data(), ck_rc.data(), ck_rd.data(), MPI_KEY,
+                      MPI_COMM_WORLD);
+    }
+    // -----------------------------
 
     std::sort(received.begin(), received.end());
 
