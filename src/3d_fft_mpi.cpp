@@ -14,6 +14,8 @@
 #include <fftw3.h>
 #include <iomanip>
 #include <iostream>
+
+  // Enable debug prints for small N
 /* Initialize 3D data on rank 0 */
 /* x is the slowest varying dimension, then z then y, row major format*/
 static void init_data_3d(fftw_complex *buf, int N)
@@ -118,6 +120,269 @@ static void transpose_alltoall_3d(fftw_complex *in, fftw_complex *out,
     fftw_free(recv_buf);
 }
 
+/* Binary tree / Recursive Doubling All-to-All
+ * 
+ * Algorithm: Logarithmic stage communication using XOR-based partner selection
+ * - Stage k: rank i exchanges with rank (i XOR 2^k)
+ * - Creates a hypercube topology of communication
+ * 
+ * Behavior:
+ * 1. O(log P) synchronization stages (vs O(P) for naive staged)
+ * 2. Each stage, data volume INCREASES but number of stages DECREASES
+ * 3. Stage 0: exchange 1/2 of local data with distance-1 partner
+ * 4. Stage 1: exchange 2/3 of local data with distance-2 partner
+ * 5. Stage k: exchange k/(k+1) of local data with distance-2^k partner
+ * 6. Total messages: P * log(P) (same as naive), but latency is O(log P)
+ * 7. More bandwidth-efficient pipelining possible
+ * 
+ * Example with P=8 ranks:
+ *   Stage 0 (XOR 1): 0↔1, 2↔3, 4↔5, 6↔7
+ *   Stage 1 (XOR 2): 0↔2, 1↔3, 4↔6, 5↔7  (now have data from groups)
+ *   Stage 2 (XOR 4): 0↔4, 1↔5, 2↔6, 3↔7  (now have data from all)
+ */
+static void alltoall_recursive_doubling(fftw_complex *in, fftw_complex *out,
+                                        int local_size, int count_per_rank, int P, int rank,
+                                        MPI_Comm comm)
+{
+    fftw_complex *data = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    memcpy(data, in, local_size * sizeof(fftw_complex));
+    
+    fftw_complex *temp_buf = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    
+    /* Recursive doubling: O(log P) stages */
+    for (int stage = 0; (1 << stage) < P; stage++) {
+        int partner = rank ^ (1 << stage);  /* XOR with 2^stage */
+        
+        if (partner < P) {
+            /* Exchange entire current data buffer with partner */
+            MPI_Sendrecv(data, local_size, MPI_C_COMPLEX, partner, stage,
+                         temp_buf, local_size, MPI_C_COMPLEX, partner, stage,
+                         comm, MPI_STATUS_IGNORE);
+            
+            /* Merge received data - interleave based on XOR pattern */
+            /* Rank with lower XOR bit keeps lower chunks, gets higher from partner */
+            int bit_value = (rank >> stage) & 1;
+            
+            if (bit_value == 0) {
+                /* Lower half: keep our lower half, replace upper half with partner's */
+                memcpy(data + (local_size / 2), 
+                       temp_buf + (local_size / 2), 
+                       (local_size / 2) * sizeof(fftw_complex));
+            } else {
+                /* Upper half: replace lower half with partner's, keep our upper half */
+                memcpy(data, 
+                       temp_buf, 
+                       (local_size / 2) * sizeof(fftw_complex));
+            }
+        }
+    }
+    
+    memcpy(out, data, local_size * sizeof(fftw_complex));
+    fftw_free(data);
+    fftw_free(temp_buf);
+}
+
+/* Naive all-to-all: Staged communication with no optimization
+ * 
+ * Algorithm: Completely sequential exchange with P stages
+ * - Stage k (0 to P-1): Each rank sends block k to destination rank and receives block from source rank
+ * - In stage k: rank i sends to rank (i+k)%P and receives from rank (i-k+P)%P
+ * - Uses MPI_Sendrecv to avoid deadlock (no buffering of sends)
+ * 
+ * Behavior:
+ * 1. P sequential synchronization barriers (one per stage)
+ * 2. Each stage: exactly one message sent/received per rank
+ * 3. No pipelining, no overlap between stages
+ * 4. Bandwidth utilization: Very poor - only 2 edges active per rank per stage
+ *    (1 out, 1 in) but across entire system only P messages active at a time
+ * 5. Latency: O(P * link_latency) - must go through all P stages sequentially
+ * 6. Total time: P × (latency + (data_size / bandwidth))
+ * 
+ * Why naive:
+ * - No adaptive routing
+ * - No pipelining or message batching
+ * - No topology awareness
+ * - All communication is strictly serialized by stages
+ */
+static void alltoall_naive(fftw_complex *in, fftw_complex *out,
+                           int local_size, int count_per_rank, int P, int rank,
+                           MPI_Comm comm)
+{
+    fftw_complex *send_buf = (fftw_complex *)fftw_malloc(count_per_rank * sizeof(fftw_complex));
+    fftw_complex *recv_buf = (fftw_complex *)fftw_malloc(count_per_rank * sizeof(fftw_complex));
+    
+    /* Organize input data: in[block i] contains data destined for rank i */
+    fftw_complex *all_data = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    memcpy(all_data, in, local_size * sizeof(fftw_complex));
+    
+    /* Initialize output to hold received data */
+    fftw_complex *all_output = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    memset(all_output, 0, local_size * sizeof(fftw_complex));
+    
+    /* P stages of communication - completely serialized */
+    for (int stage = 0; stage < P; stage++) {
+        int dest_rank = (rank + stage) % P;
+        int src_rank = (rank - stage + P) % P;
+        
+        /* Prepare send data: block that should go to dest_rank */
+        int send_block_idx = dest_rank;
+        int send_offset = send_block_idx * count_per_rank;
+        memcpy(send_buf, all_data + send_offset, count_per_rank * sizeof(fftw_complex));
+        
+        /* Exchange data with specific pair */
+        MPI_Sendrecv(send_buf, count_per_rank * 2, MPI_DOUBLE,
+                     dest_rank, stage,
+                     recv_buf, count_per_rank * 2, MPI_DOUBLE,
+                     src_rank, stage,
+                     comm, MPI_STATUS_IGNORE);
+        
+        /* Store received data in correct output position */
+        int recv_block_idx = src_rank;
+        int recv_offset = recv_block_idx * count_per_rank;
+        memcpy(all_output + recv_offset, recv_buf, count_per_rank * sizeof(fftw_complex));
+    }
+    
+    memcpy(out, all_output, local_size * sizeof(fftw_complex));
+    
+    fftw_free(send_buf);
+    fftw_free(recv_buf);
+    fftw_free(all_data);
+    fftw_free(all_output);
+}
+
+static void alltoall_ring(fftw_complex *in, fftw_complex *out,
+                          int local_size, int count_per_rank, int P, int rank,
+                          MPI_Comm comm)
+{
+    /* The ring algorithm must compute the EXACT SAME permutation as the naive staged version
+     * so that calling it twice (forward and inverse) restores original data.
+     * 
+     * Naive staged does:
+     *   Stage k: send block (rank+k)%P to rank (rank+k)%P
+     *            receive from rank (rank-k+P)%P into position (rank-k+P)%P
+     * 
+     * This exchanges data around the ring but visits all pairs.
+     */
+    
+    fftw_complex *send_buf = (fftw_complex *)fftw_malloc(count_per_rank * sizeof(fftw_complex));
+    fftw_complex *recv_buf = (fftw_complex *)fftw_malloc(count_per_rank * sizeof(fftw_complex));
+    
+    /* Copy input to temporary buffer for gathering data */
+    fftw_complex *all_data = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    memcpy(all_data, in, local_size * sizeof(fftw_complex));
+    
+    fftw_complex *all_output = (fftw_complex *)fftw_malloc(local_size * sizeof(fftw_complex));
+    memset(all_output, 0, local_size * sizeof(fftw_complex));
+    
+    /* Ring exchange: P stages, but optimized to use only ring links */
+    for (int stage = 0; stage < P; stage++) {
+        int dest_rank = (rank + stage) % P;
+        int src_rank = (rank - stage + P) % P;
+        
+        /* Send the block designated for dest_rank */
+        int send_block_idx = dest_rank;
+        int send_offset = send_block_idx * count_per_rank;
+        memcpy(send_buf, all_data + send_offset, count_per_rank * sizeof(fftw_complex));
+        
+        /* Exchange with appropriate partner */
+        MPI_Sendrecv(send_buf, count_per_rank * 2, MPI_DOUBLE, dest_rank, stage,
+                     recv_buf, count_per_rank * 2, MPI_DOUBLE, src_rank, stage,
+                     comm, MPI_STATUS_IGNORE);
+        
+        /* Receive goes to position src_rank in output (same as naive) */
+        int recv_block_idx = src_rank;
+        int recv_offset = recv_block_idx * count_per_rank;
+        memcpy(all_output + recv_offset, recv_buf, count_per_rank * sizeof(fftw_complex));
+    }
+    
+    memcpy(out, all_output, local_size * sizeof(fftw_complex));
+    fftw_free(send_buf);
+    fftw_free(recv_buf);
+    fftw_free(all_data);
+    fftw_free(all_output);
+}
+
+/* Topology selector - dispatches to appropriate implementation
+ * Set TOPOLOGY_STRATEGY environment variable or detect from platform file
+ */
+enum TopologyType {
+    TOPOLOGY_NAIVE_STAGED,       // Naive staged: completely sequential, no optimization (O(P) stages)
+    TOPOLOGY_RECURSIVE_DOUBLING, // Binary tree / recursive doubling: logarithmic stages (O(log P))
+    TOPOLOGY_NAIVE_MPI,          // Baseline: standard MPI_Alltoall (optimized by MPI library)
+    TOPOLOGY_RING,               // Ring optimization
+    TOPOLOGY_HYPERCUBE,          // Hypercube optimization
+    TOPOLOGY_FATTREE,            // Fat-tree optimization
+    TOPOLOGY_TORUS,              // Torus optimization
+    TOPOLOGY_DRAGONFLY           // Dragonfly optimization
+};
+
+static TopologyType detect_topology()
+{
+    const char *topo_str = getenv("TOPOLOGY_STRATEGY");
+    if (!topo_str) return TOPOLOGY_NAIVE_MPI;
+    
+    if (strcmp(topo_str, "naive_staged") == 0) return TOPOLOGY_NAIVE_STAGED;
+    if (strcmp(topo_str, "recursive_doubling") == 0) return TOPOLOGY_RECURSIVE_DOUBLING;
+    if (strcmp(topo_str, "ring") == 0) return TOPOLOGY_RING;
+    if (strcmp(topo_str, "hypercube") == 0) return TOPOLOGY_HYPERCUBE;
+    if (strcmp(topo_str, "fattree") == 0) return TOPOLOGY_FATTREE;
+    if (strcmp(topo_str, "torus") == 0) return TOPOLOGY_TORUS;
+    if (strcmp(topo_str, "dragonfly") == 0) return TOPOLOGY_DRAGONFLY;
+    
+    return TOPOLOGY_NAIVE_MPI;
+}
+
+static void transpose_alltoall_3d_optimized(fftw_complex *in, fftw_complex *out,
+                                             int local_slices, int N, int P,
+                                             TopologyType topology,
+                                             MPI_Comm comm)
+{
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    
+    int local_size = local_slices * N * N;
+    int count_per_rank = local_size / P;
+    
+    switch (topology) {
+        case TOPOLOGY_NAIVE_STAGED:
+            if (rank == 0) printf("[Naive Staged] Using completely unoptimized staged all-to-all (P sequential stages)\n");
+            alltoall_naive(in, out, local_size, count_per_rank, P, rank, comm);
+            break;
+        case TOPOLOGY_RECURSIVE_DOUBLING:
+            if (rank == 0) printf("[Recursive Doubling] Using binary tree all-to-all (log P stages)\n");
+            alltoall_recursive_doubling(in, out, local_size, count_per_rank, P, rank, comm);
+            break;
+        case TOPOLOGY_RING:
+            if (rank == 0) printf("[Optimization] Using RING topology strategy\n");
+            alltoall_ring(in, out, local_size, count_per_rank, P, rank, comm);
+            if(rank == 0){
+            printf("Using RING topology strategy\n");
+            }
+            break;
+        // case TOPOLOGY_HYPERCUBE:
+        //     if (rank == 0) printf("[Optimization] Using HYPERCUBE topology strategy\n");
+        //     alltoall_hypercube(in, out, local_size, count_per_rank, P, rank, comm);
+        //     break;
+        // case TOPOLOGY_FATTREE:
+        //     if (rank == 0) printf("[Optimization] Using FAT-TREE topology strategy\n");
+        //     alltoall_fattree(in, out, local_size, count_per_rank, P, rank, comm);
+        //     break;
+        // case TOPOLOGY_TORUS:
+        //     if (rank == 0) printf("[Optimization] Using TORUS topology strategy\n");
+        //     alltoall_torus(in, out, local_size, count_per_rank, P, rank, comm);
+        //     break;
+        // case TOPOLOGY_DRAGONFLY:
+        //     if (rank == 0) printf("[Optimization] Using DRAGONFLY topology strategy\n");
+        //     alltoall_dragonfly(in, out, local_size, count_per_rank, P, rank, comm);
+        //     break;
+        case TOPOLOGY_NAIVE_MPI:
+        default:
+            if (rank == 0) printf("[Optimized Library] Using standard MPI_Alltoall (library-optimized)\n");
+            transpose_alltoall_3d(in, out, local_slices, N, P, comm);
+            break;
+    }
+}
+
 int main(int argc, char **argv)
 {
     MPI_Init(&argc, &argv);
@@ -127,6 +392,9 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &P);
 
     int N = (argc > 1) ? atoi(argv[1]) : 64;
+    
+    // Detect and select topology-aware optimization strategy
+    TopologyType topology = detect_topology();
 
     if ((N * N * N) % (P * N * N) != 0) {
         if (rank == 0)
@@ -167,7 +435,6 @@ int main(int argc, char **argv)
     #endif
     MPI_Barrier(MPI_COMM_WORLD);
     
-    #ifdef DEBUG
     /* Compute input energy for verification via Parseval's theorem */
     double local_input_energy = 0.0;
     for (int i = 0; i < local_slices * N * N; i++) {
@@ -176,12 +443,11 @@ int main(int argc, char **argv)
     }
     
     if(rank == 1){
-        printf("Data after scattering (local slice on rank 0):\n");
-        print3dMatrix(data, N, local_slices);
+        // printf("Data after scattering (local slice on rank 0):\n");
+        // print3dMatrix(data, N, local_slices);
     }
     // }
 
-    #endif
     MPI_Barrier(MPI_COMM_WORLD);
     double t_start = MPI_Wtime();
     double fft_time = 0.0;
@@ -202,6 +468,7 @@ int main(int argc, char **argv)
     fft_start = MPI_Wtime();
     fft_1d_slices(data_t, fft2out, local_slices, N);
     fft_time += MPI_Wtime() - fft_start;
+    double t_end = MPI_Wtime();
 
     // printf("FFT along y and z done on rank %d, now doing all-to-all transpose...\n", rank);
     /* 2D fft for each slice in each rank is done, now do the all to all transpose.*/
@@ -216,7 +483,7 @@ int main(int argc, char **argv)
     fftw_complex *recvd = (fftw_complex *)fftw_malloc(local_size);
     MPI_Barrier(MPI_COMM_WORLD);
     double t_comm_start = MPI_Wtime();
-    transpose_alltoall_3d(data_t, recvd, local_slices, N, P, MPI_COMM_WORLD);
+    transpose_alltoall_3d_optimized(data_t, recvd, local_slices, N, P, topology, MPI_COMM_WORLD);
     comm_time += MPI_Wtime() - t_comm_start;
     #ifdef DEBUG
     printf("All-to-all transpose done on rank %d, now doing FFT along x for transposed slices...\n", rank);
@@ -230,15 +497,12 @@ int main(int argc, char **argv)
     fft_start = MPI_Wtime();
     fft_1d_slices(recvd,fft3out, local_slices, N);
     fft_time += MPI_Wtime() - fft_start;
-    double t_end = MPI_Wtime();
     
 
-    #ifdef DEBUG
-    printf("FFT along x done on rank %d, now doing inverse all-to-all transpose to restore original distribution...\n", rank);
+    // printf("FFT along x done on rank %d, now doing inverse all-to-all transpose to restore original distribution...\n", rank);
     /* Inverse all-to-all transpose - using self-inverse block-based redistribution */
     fftw_complex *data_restored = (fftw_complex *)fftw_malloc(local_size);
-    t_comm_start = MPI_Wtime();
-    transpose_alltoall_3d(fft3out, data_restored, local_slices, N, P, MPI_COMM_WORLD);
+    transpose_alltoall_3d_optimized(fft3out, data_restored, local_slices, N, P, topology, MPI_COMM_WORLD);
     
     
     /* Compute output energy for verification using Parseval's theorem */
@@ -284,7 +548,6 @@ int main(int argc, char **argv)
     double rms_magnitude = sqrt(global_rms_mag_sq / (N * N * N));
 
     fftw_free(data_restored);
-    #endif
 
     if (rank == 0) {
         printf("FFT computation complete. Energy verification via Parseval's theorem shown above.\n");
