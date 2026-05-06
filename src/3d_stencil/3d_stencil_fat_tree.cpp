@@ -1,16 +1,38 @@
 #include <mpi.h>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <vector>
 #include <algorithm>
 
-// Fat tree: pin dims[0] to leaf-switch fanout (see platforms/*/fat_tree.xml).
+// FAT-TREE OPTIMIZATIONS VS A GENERIC 3D STENCIL:
+// 1) Parse node-* host ids and reorder ranks before decomposition.
+// 2) Use a fat-tree-aware split key that interleaves local leaf positions across groups.
+// 3) Pin one Cartesian dimension to expected leaf fanout and choose remaining dims via weighted surface search.
+// 4) Keep periodic 3D halo exchange with overlap (interior compute while halos are in flight).
 // Usage: prog [N] | prog NX NY NZ   (default N = 256 cubic if no args)
 
 constexpr double W_CENTER   = 0.5;
 constexpr double W_NEIGHBOR = 0.5 / 6.0;
 
 constexpr int ITERATIONS = 30;
+
+static int extract_node_id(const char* name) {
+    const std::string s(name ? name : "");
+    const std::string needle = "node-";
+    const size_t p = s.find(needle);
+    if (p == std::string::npos) return -1;
+    size_t i = p + needle.size();
+    int v = 0;
+    bool any = false;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+        any = true;
+        v = v * 10 + (s[i] - '0');
+        ++i;
+    }
+    return any ? v : -1;
+}
 
 static int fat_tree_first_dim(int size) {
     switch (size) {
@@ -23,11 +45,38 @@ static int fat_tree_first_dim(int size) {
     }
 }
 
+static bool choose_pinned_dims(int size, int pin, int NX, int NY, int NZ,
+                               double wx, double wy, double wz, int dims[3]) {
+    if (pin <= 0 || size % pin != 0) return false;
+    int rem = size / pin;
+    double best = std::numeric_limits<double>::infinity();
+    int best1 = 0, best2 = 0;
+    for (int d1 = 1; d1 <= rem; ++d1) {
+        if (rem % d1 != 0) continue;
+        int d2 = rem / d1;
+        if (NX % pin || NY % d1 || NZ % d2) continue;
+        double lx = static_cast<double>(NX) / pin;
+        double ly = static_cast<double>(NY) / d1;
+        double lz = static_cast<double>(NZ) / d2;
+        double score = wx * (ly * lz) + wy * (lx * lz) + wz * (lx * ly);
+        if (score < best) { best = score; best1 = d1; best2 = d2; }
+    }
+    if (best1 == 0) return false;
+    dims[0] = pin; dims[1] = best1; dims[2] = best2;
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int world_rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    char proc_name[MPI_MAX_PROCESSOR_NAME];
+    int proc_len = 0;
+    MPI_Get_processor_name(proc_name, &proc_len);
+    int node_id = extract_node_id(proc_name);
+    if (node_id < 0) node_id = world_rank;
 
     int NX = 256;
     int NY = 256;
@@ -39,30 +88,35 @@ int main(int argc, char* argv[]) {
         NY = std::atoi(argv[2]);
         NZ = std::atoi(argv[3]);
     } else if (argc != 1) {
-        if (rank == 0)
+        if (world_rank == 0)
             std::cerr << "Usage: " << argv[0] << " [N]\n       "
                       << argv[0] << " NX NY NZ\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
     if (NX <= 0 || NY <= 0 || NZ <= 0) {
-        if (rank == 0)
+        if (world_rank == 0)
             std::cerr << "Error: NX, NY, NZ must be positive.\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
     int dims[3] = {0, 0, 0};
     int pin = fat_tree_first_dim(size);
-    if (pin > 0 && size % pin == 0) {
-        dims[0] = pin;
-        MPI_Dims_create(size / pin, 2, &dims[1]);
-    } else {
+    int groups = (pin > 0) ? (size / pin) : size;
+    int fat_tree_key = (pin > 0) ? ((node_id % pin) * groups + (node_id / pin)) : node_id;
+
+    MPI_Comm place_comm;
+    MPI_Comm_split(MPI_COMM_WORLD, 0, fat_tree_key, &place_comm);
+
+    int rank;
+    MPI_Comm_rank(place_comm, &rank);
+
+    if (!choose_pinned_dims(size, pin, NX, NY, NZ, 1.7, 1.0, 1.0, dims))
         MPI_Dims_create(size, 3, dims);
-    }
 
     int periods[3] = {1, 1, 1};
 
     MPI_Comm cart_comm;
-    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, 1, &cart_comm);
+    MPI_Cart_create(place_comm, 3, dims, periods, 1, &cart_comm);
 
     int coords[3];
     MPI_Cart_get(cart_comm, 3, dims, periods, coords);
@@ -219,6 +273,7 @@ int main(int argc, char* argv[]) {
                   << " s\n";
 
     MPI_Comm_free(&cart_comm);
+    MPI_Comm_free(&place_comm);
     MPI_Finalize();
     return 0;
 }

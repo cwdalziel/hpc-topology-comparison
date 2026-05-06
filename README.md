@@ -48,5 +48,5 @@ Examples:
 `
 
 `
-./run_benchmarks.sh bin/3d_stencil/3d_stencil_torus_hypercube 128 96 96 96
+./run_benchmarks.sh bin/3d_stencil/3d_stencil_torus 128 96 96 512
 `

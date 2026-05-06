@@ -6,16 +6,15 @@
 #include <vector>
 #include <algorithm>
 
-// DRAGONFLY OPTIMIZATIONS VS A GENERIC 3D STENCIL:
-// 1) Parse node-* host ids and reorder ranks before decomposition.
-// 2) Use a dragonfly-aware split key that groups by local port position across groups.
-// 3) Pin one Cartesian dimension to group size and pick remaining dims with heavier penalty on group-crossing faces.
-// 4) Keep periodic 3D halo exchange with overlap (interior compute while halos are in flight).
+// TORUS OPTIMIZATIONS VS A GENERIC 3D STENCIL:
+// 1) Parse node-* host ids and reorder ranks by physical host index.
+// 2) Build a 3D periodic Cartesian communicator on the reordered ranks.
+// 3) Use a torus-focused balanced 3D factor search (surface/shape aware) instead of plain MPI_Dims_create.
+// 4) Overlap interior compute with nonblocking 6-face halo exchange each iteration.
 // Usage: prog [N] | prog NX NY NZ   (default N = 256 cubic if no args)
 
 constexpr double W_CENTER   = 0.5;
 constexpr double W_NEIGHBOR = 0.5 / 6.0;
-
 constexpr int ITERATIONS = 30;
 
 static int extract_node_id(const char* name) {
@@ -34,36 +33,30 @@ static int extract_node_id(const char* name) {
     return any ? v : -1;
 }
 
-static int dragonfly_first_dim(int size) {
-    switch (size) {
-        case 16:
-        case 32: return 8;
-        case 64: return 16;
-        case 128: return 32;
-        case 256: return 64;
-        default: return 0;
-    }
-}
+static void choose_torus_dims(int size, int NX, int NY, int NZ, int dims[3]) {
+    double best_score = std::numeric_limits<double>::infinity();
+    int best[3] = {1, 1, size};
 
-static bool choose_pinned_dims(int size, int pin, int NX, int NY, int NZ,
-                               double wx, double wy, double wz, int dims[3]) {
-    if (pin <= 0 || size % pin != 0) return false;
-    int rem = size / pin;
-    double best = std::numeric_limits<double>::infinity();
-    int best1 = 0, best2 = 0;
-    for (int d1 = 1; d1 <= rem; ++d1) {
-        if (rem % d1 != 0) continue;
-        int d2 = rem / d1;
-        if (NX % pin || NY % d1 || NZ % d2) continue;
-        double lx = static_cast<double>(NX) / pin;
-        double ly = static_cast<double>(NY) / d1;
-        double lz = static_cast<double>(NZ) / d2;
-        double score = wx * (ly * lz) + wy * (lx * lz) + wz * (lx * ly);
-        if (score < best) { best = score; best1 = d1; best2 = d2; }
+    for (int d0 = 1; d0 <= size; ++d0) {
+        if (size % d0 != 0) continue;
+        int rem = size / d0;
+        for (int d1 = 1; d1 <= rem; ++d1) {
+            if (rem % d1 != 0) continue;
+            int d2 = rem / d1;
+            if (NX % d0 || NY % d1 || NZ % d2) continue;
+            double lx = static_cast<double>(NX) / d0;
+            double ly = static_cast<double>(NY) / d1;
+            double lz = static_cast<double>(NZ) / d2;
+            double face = (lx * ly) + (lx * lz) + (ly * lz);
+            double balance = std::max({lx, ly, lz}) / std::min({lx, ly, lz});
+            double score = face + 0.25 * balance;
+            if (score < best_score) {
+                best_score = score;
+                best[0] = d0; best[1] = d1; best[2] = d2;
+            }
+        }
     }
-    if (best1 == 0) return false;
-    dims[0] = pin; dims[1] = best1; dims[2] = best2;
-    return true;
+    dims[0] = best[0]; dims[1] = best[1]; dims[2] = best[2];
 }
 
 int main(int argc, char* argv[]) {
@@ -77,6 +70,12 @@ int main(int argc, char* argv[]) {
     MPI_Get_processor_name(proc_name, &proc_len);
     int node_id = extract_node_id(proc_name);
     if (node_id < 0) node_id = world_rank;
+
+    MPI_Comm place_comm;
+    MPI_Comm_split(MPI_COMM_WORLD, 0, node_id, &place_comm);
+
+    int rank;
+    MPI_Comm_rank(place_comm, &rank);
 
     int NX = 256;
     int NY = 256;
@@ -99,23 +98,9 @@ int main(int argc, char* argv[]) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    int dims[3] = {0, 0, 0};
-    int pin = dragonfly_first_dim(size);
-    int groups = (pin > 0) ? (size / pin) : size;
-    int group = (pin > 0) ? (node_id / pin) : 0;
-    int local = (pin > 0) ? (node_id % pin) : node_id;
-    int dragonfly_key = (pin > 0) ? (local * groups + group) : node_id;
-
-    MPI_Comm place_comm;
-    MPI_Comm_split(MPI_COMM_WORLD, 0, dragonfly_key, &place_comm);
-
-    int rank;
-    MPI_Comm_rank(place_comm, &rank);
-
-    if (!choose_pinned_dims(size, pin, NX, NY, NZ, 2.4, 1.0, 1.0, dims))
-        MPI_Dims_create(size, 3, dims);
-
+    int dims[3]    = {0, 0, 0};
     int periods[3] = {1, 1, 1};
+    choose_torus_dims(size, NX, NY, NZ, dims);
 
     MPI_Comm cart_comm;
     MPI_Cart_create(place_comm, 3, dims, periods, 1, &cart_comm);
@@ -262,17 +247,12 @@ int main(int argc, char* argv[]) {
 
     MPI_Barrier(cart_comm);
     double t_start = MPI_Wtime();
-
-    for (int iter = 0; iter < ITERATIONS; iter++)
-        step();
-
+    for (int iter = 0; iter < ITERATIONS; iter++) step();
     MPI_Barrier(cart_comm);
     double t_end = MPI_Wtime();
 
     if (rank == 0)
-        std::cout << "3D stencil time: "
-                  << (t_end - t_start)
-                  << " s\n";
+        std::cout << "3D stencil time: " << (t_end - t_start) << " s\n";
 
     MPI_Comm_free(&cart_comm);
     MPI_Comm_free(&place_comm);

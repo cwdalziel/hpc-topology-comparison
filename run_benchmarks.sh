@@ -3,7 +3,7 @@
 # Usage: ./run_benchmarks.sh <binary> <np> [program arguments...]
 # Examples:
 #   ./run_benchmarks.sh bin/stencil 64
-#   ./run_benchmarks.sh bin/3d_stencil/3d_stencil_torus_hypercube 128 96 96 96
+#   ./run_benchmarks.sh bin/3d_stencil/3d_stencil_torus 128 96 96 512
 
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Usage: $0 <binary> <np> [program arguments...]"
@@ -14,7 +14,7 @@ BINARY=$1
 NP=$2
 shift 2
 
-FLOPS=1Gf
+FLOPS=5.262Gf
 PLATFORM_DIR=platforms/$NP   # look for platform files for this node count
 # Optional: RESULTS_SUBDIR=strong → results/strong/<np>/   (avoids clobbering other studies)
 if [ -n "${RESULTS_SUBDIR:-}" ]; then

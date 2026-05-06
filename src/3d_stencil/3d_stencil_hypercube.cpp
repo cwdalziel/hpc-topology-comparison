@@ -1,24 +1,79 @@
 #include <mpi.h>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <vector>
 #include <algorithm>
 
-// ---------------------------
-// 3D DECOMPOSITION - TORUS / HYPERCUBE (Cartesian topology reorders on its own)
+// HYPERCUBE OPTIMIZATIONS VS A GENERIC 3D STENCIL:
+// 1) Parse node-* host ids and reorder ranks using Gray-code keying.
+// 2) Gray-code ordering keeps many consecutive ranks one bit apart in id space.
+// 3) For power-of-two sizes, split hypercube bits across axes by remaining extent (bit-aware dims).
+// 4) Overlap interior compute with nonblocking 6-face halo exchange each iteration.
 // Usage: prog [N] | prog NX NY NZ   (default N = 256 cubic if no args)
-// ---------------------------
 
 constexpr double W_CENTER   = 0.5;
 constexpr double W_NEIGHBOR = 0.5 / 6.0;
-
 constexpr int ITERATIONS = 30;
+
+static int extract_node_id(const char* name) {
+    const std::string s(name ? name : "");
+    const std::string needle = "node-";
+    const size_t p = s.find(needle);
+    if (p == std::string::npos) return -1;
+    size_t i = p + needle.size();
+    int v = 0;
+    bool any = false;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+        any = true;
+        v = v * 10 + (s[i] - '0');
+        ++i;
+    }
+    return any ? v : -1;
+}
+
+static int gray_code(int x) { return x ^ (x >> 1); }
+
+static bool is_power_of_two(int x) { return x > 0 && (x & (x - 1)) == 0; }
+
+static void choose_hypercube_dims(int size, int NX, int NY, int NZ, int dims[3]) {
+    if (!is_power_of_two(size)) {
+        MPI_Dims_create(size, 3, dims);
+        return;
+    }
+    dims[0] = dims[1] = dims[2] = 1;
+    int bits = 0;
+    while ((1 << bits) < size) ++bits;
+    for (int b = 0; b < bits; ++b) {
+        double sx = static_cast<double>(NX) / dims[0];
+        double sy = static_cast<double>(NY) / dims[1];
+        double sz = static_cast<double>(NZ) / dims[2];
+        if (sx >= sy && sx >= sz && (NX % (dims[0] * 2) == 0)) dims[0] *= 2;
+        else if (sy >= sx && sy >= sz && (NY % (dims[1] * 2) == 0)) dims[1] *= 2;
+        else if (NZ % (dims[2] * 2) == 0) dims[2] *= 2;
+        else if (NX % (dims[0] * 2) == 0) dims[0] *= 2;
+        else dims[1] *= 2;
+    }
+}
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int world_rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    char proc_name[MPI_MAX_PROCESSOR_NAME];
+    int proc_len = 0;
+    MPI_Get_processor_name(proc_name, &proc_len);
+    int node_id = extract_node_id(proc_name);
+    if (node_id < 0) node_id = world_rank;
+
+    MPI_Comm place_comm;
+    MPI_Comm_split(MPI_COMM_WORLD, 0, gray_code(node_id), &place_comm);
+
+    int rank;
+    MPI_Comm_rank(place_comm, &rank);
 
     int NX = 256;
     int NY = 256;
@@ -30,23 +85,23 @@ int main(int argc, char* argv[]) {
         NY = std::atoi(argv[2]);
         NZ = std::atoi(argv[3]);
     } else if (argc != 1) {
-        if (rank == 0)
+        if (world_rank == 0)
             std::cerr << "Usage: " << argv[0] << " [N]\n       "
                       << argv[0] << " NX NY NZ\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
     if (NX <= 0 || NY <= 0 || NZ <= 0) {
-        if (rank == 0)
+        if (world_rank == 0)
             std::cerr << "Error: NX, NY, NZ must be positive.\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
     int dims[3]    = {0, 0, 0};
     int periods[3] = {1, 1, 1};
-    MPI_Dims_create(size, 3, dims);
+    choose_hypercube_dims(size, NX, NY, NZ, dims);
 
     MPI_Comm cart_comm;
-    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, 1, &cart_comm);
+    MPI_Cart_create(place_comm, 3, dims, periods, 1, &cart_comm);
 
     int coords[3];
     MPI_Cart_get(cart_comm, 3, dims, periods, coords);
@@ -190,19 +245,15 @@ int main(int argc, char* argv[]) {
 
     MPI_Barrier(cart_comm);
     double t_start = MPI_Wtime();
-
-    for (int iter = 0; iter < ITERATIONS; iter++)
-        step();
-
+    for (int iter = 0; iter < ITERATIONS; iter++) step();
     MPI_Barrier(cart_comm);
     double t_end = MPI_Wtime();
 
     if (rank == 0)
-        std::cout << "3D stencil time: "
-                  << (t_end - t_start)
-                  << " s\n";
+        std::cout << "3D stencil time: " << (t_end - t_start) << " s\n";
 
     MPI_Comm_free(&cart_comm);
+    MPI_Comm_free(&place_comm);
     MPI_Finalize();
     return 0;
 }
