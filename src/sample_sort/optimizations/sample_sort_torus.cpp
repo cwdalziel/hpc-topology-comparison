@@ -253,6 +253,11 @@ int main(int argc, char* argv[]) {
     MPI_Alltoallv(p1_send_buf.data(), p1_send_counts.data(), p1_send_displs.data(), MPI_KEY,
                   p1_recv_buf.data(), p1_recv_counts.data(), p1_recv_displs.data(), MPI_KEY,
                   row_comm);
+    // Drop p1_send_buf and `local` (no longer needed) to relieve memory pressure.
+    // SMPI runs all ranks as threads in one process; per-rank allocations multiply
+    // by num_ranks. At weak np=256 this matters.
+    std::vector<Key>().swap(p1_send_buf);
+    std::vector<Key>().swap(local);
 
     // Reorganize p1_recv_buf (currently grouped by source-col, inner by dest-row)
     // into p2_send_buf (grouped by dest-row, inner by source-col).
@@ -281,6 +286,8 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    // Drop p1_recv_buf — its contents are now in p2_send_buf.
+    std::vector<Key>().swap(p1_recv_buf);
 
     // Phase 2 recv counts via alltoall on col sub-comm
     std::vector<int> p2_recv_counts(dims[0], 0);
@@ -298,6 +305,7 @@ int main(int argc, char* argv[]) {
     MPI_Alltoallv(p2_send_buf.data(), p2_send_counts.data(), p2_send_displs.data(), MPI_KEY,
                   received.data(),    p2_recv_counts.data(), p2_recv_displs.data(), MPI_KEY,
                   col_comm);
+    std::vector<Key>().swap(p2_send_buf);
 
     MPI_Comm_free(&row_comm);
     MPI_Comm_free(&col_comm);

@@ -272,6 +272,10 @@ int main(int argc, char* argv[]) {
     MPI_Alltoallv(p1_send_buf.data(), p1_send_counts.data(), p1_send_displs.data(), MPI_KEY,
                   p1_recv_buf.data(), p1_recv_counts.data(), p1_recv_displs.data(), MPI_KEY,
                   intra_group_comm);
+    // Free p1_send_buf and `local` — both no longer referenced. SMPI threads
+    // share the process's memory; aggressive freeing matters at high np.
+    std::vector<Key>().swap(p1_send_buf);
+    std::vector<Key>().swap(local);
 
     // Reorganize phase-1 recv buf for phase 2: group by destination group g.
     std::vector<int> p2_send_counts(num_groups, 0);
@@ -299,6 +303,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    std::vector<Key>().swap(p1_recv_buf);
 
     std::vector<int> p2_recv_counts(num_groups, 0);
     MPI_Alltoall(p2_send_counts.data(), 1, MPI_INT,
@@ -315,6 +320,7 @@ int main(int argc, char* argv[]) {
     MPI_Alltoallv(p2_send_buf.data(), p2_send_counts.data(), p2_send_displs.data(), MPI_KEY,
                   received.data(),    p2_recv_counts.data(), p2_recv_displs.data(), MPI_KEY,
                   inter_group_comm);
+    std::vector<Key>().swap(p2_send_buf);
 
     MPI_Comm_free(&intra_group_comm);
     MPI_Comm_free(&inter_group_comm);
