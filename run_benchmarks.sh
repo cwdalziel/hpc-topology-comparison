@@ -38,15 +38,41 @@ mkdir -p "$RESULTS_DIR"
 BENCHMARK=$(basename "$BINARY")
 OUTFILE="$RESULTS_DIR/${BENCHMARK}_results.csv"
 
-echo "topology,time_s" > "$OUTFILE"
+# Resume support: if OUTFILE already exists, treat any successfully-recorded
+# (non-ERROR) row as "already done" and skip those topologies. ERROR rows
+# are dropped on resume so they get retried.
+DONE_TOPOLOGIES=""
+if [ -f "$OUTFILE" ]; then
+    # Treat a row as "done" only if the time is a valid floating-point number
+    # (e.g. 0.001234, 1.23e-05). This catches partial regex captures like "e"
+    # from runs that crashed mid-output.
+    DONE_TOPOLOGIES=$(awk -F, 'NR>1 && $2 ~ /^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/ {print $1}' "$OUTFILE" | tr '\n' ' ')
+    TMPFILE=$(mktemp)
+    echo "topology,time_s" > "$TMPFILE"
+    awk -F, 'NR>1 && $2 ~ /^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/ {print}' "$OUTFILE" >> "$TMPFILE"
+    mv "$TMPFILE" "$OUTFILE"
+else
+    echo "topology,time_s" > "$OUTFILE"
+fi
+
 echo "Running $BENCHMARK across all topologies with $NP ranks..."
 if [ "$#" -gt 0 ]; then
     echo "(extra program args: $*)"
+fi
+if [ -n "$DONE_TOPOLOGIES" ]; then
+    echo "(resuming; already done: $DONE_TOPOLOGIES)"
 fi
 echo "-----------------------------------------------------------"
 
 for PLATFORM in "$PLATFORM_DIR"/*.xml; do
     TOPOLOGY=$(basename "$PLATFORM" .xml)
+
+    # Skip if already recorded for this CSV
+    if echo " $DONE_TOPOLOGIES " | grep -q " $TOPOLOGY "; then
+        printf "  %-20s ... (skip; already in CSV)\n" "$TOPOLOGY"
+        continue
+    fi
+
     printf "  %-20s ... " "$TOPOLOGY"
     OUTPUT=$(smpirun -np "$NP" \
                      -platform "$PLATFORM" \
